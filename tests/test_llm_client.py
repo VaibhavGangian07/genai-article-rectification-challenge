@@ -15,7 +15,7 @@ from llm_client import LLMError
 
 MESSAGES = [{"role": "user", "content": "x" * 300}]
 ENV = {"LLM_MODEL_NAME": "groq/openai/gpt-oss-120b", "LLM_API_KEY": "dummy-test-key",
-       "LLM_API_BASE": "http://127.0.0.1:9/openai/v1"}
+       "LLM_API_BASE": "https://api.groq.com/openai/v1"}   # direct-Groq mode; no request ever leaves the test
 
 
 def response(content='{"edits": []}', finish="stop", prompt=1000, completion=500, reasoning=300):
@@ -53,6 +53,7 @@ class LLMClientTestCase(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
         self.completion = mock.patch.object(llm_client, "_completion",
                                             side_effect=AssertionError("unexpected API call")).start()
+        mock.patch.object(llm_client.requests, "get", side_effect=AssertionError("unexpected HTTP request")).start()
 
     def entries(self):
         if not self.ledger.exists():

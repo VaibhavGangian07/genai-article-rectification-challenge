@@ -158,6 +158,13 @@ class TestHarness(unittest.TestCase):
         self.assertTrue(next(a for a in articles if a["article_id"] == "article_001")["modes"]["perfect_010"]["missing"])
         self.assertEqual(summary["perfect_010"]["all"]["articles"], 1)
 
+    def test_split_option_scores_only_that_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, articles = evaluate.evaluate(output_dir=Path(tmp), splits=["tuning"])
+            replays = sorted(p.stem for p in (Path(tmp) / "gold_replay").glob("article_*.txt"))
+        self.assertEqual([a["article_id"] for a in articles], evaluate.SPLIT["tuning"])
+        self.assertEqual(replays, sorted(evaluate.SPLIT["tuning"]))
+
     def test_refuses_protected_output_directories(self):
         for target in (ROOT / "rectified_articles", ROOT / "reference_rectified" / "x"):
             with self.subTest(target=target), self.assertRaises(ValueError):

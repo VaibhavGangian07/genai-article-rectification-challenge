@@ -98,11 +98,16 @@ def _positions(value, kind, ev_tokens):
     return [i for i, t in enumerate(ev_tokens) if t == first]
 
 
+def _strip_emphasis(text: str) -> str:
+    # markdown emphasis markers (*bold*, _italic_) are formatting, not words a quote has to reproduce
+    return re.sub(r'[*_]+', '', text)
+
+
 def _quote_found(quote: str, text: str) -> bool:
-    """Every part of quote (split at ellipses) appears in text, in order."""
-    haystack = normalize(text)
+    """Every part of quote (split at ellipses) appears in text, in order, ignoring markdown emphasis."""
+    haystack = _strip_emphasis(normalize(text))
     pos = 0
-    for part in re.split(r'\.\.\.|…', normalize(quote)):
+    for part in re.split(r'\.\.\.|…', _strip_emphasis(normalize(quote))):
         part = part.strip(' "\'')
         if not part:
             continue
@@ -205,6 +210,8 @@ def check_edit(edit, start: int, end: int, body: str, source: str, annotations):
             return None, 'evidence_not_found'
 
     removed_kinds = {k for k in FACT_TYPES if removed[k]}
+    if 'DATE' in removed_kinds:
+        removed_kinds.add('NUM')   # a date may gain or lose its day number ("June 2025" -> "September 9, 2025")
     if removed_kinds and any(introduced[k] and k not in removed_kinds for k in ('NUM', 'DATE', 'ENT')):
         return None, 'type_mismatch'
 

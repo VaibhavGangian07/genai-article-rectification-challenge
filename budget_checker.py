@@ -63,14 +63,16 @@ def get_key_info(api_key, base_url):
     }
 
     try:
-        # The /key/info endpoint expects the key as a query param or in the header
-        # We pass it as a query param 'key' as per standard LiteLLM Proxy docs
-        response = requests.get(endpoint, headers=headers, params={"key": api_key}, timeout=10)
+        # The key goes only in the Authorization header; /key/info reports on that key.
+        # (A ?key= query parameter would put the key in URLs, error messages and server logs.)
+        response = requests.get(endpoint, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"❌ Connection Error: Could not connect to LiteLLM Proxy at {base_url}")
-        print(f"   Details: {e}")
+        # Never print the exception text: it can contain request details
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        print(f"❌ Connection Error: Could not get key info from LiteLLM Proxy at {base_url}")
+        print(f"   Details: {type(e).__name__}" + (f" (HTTP {status})" if status else ""))
         sys.exit(1)
 
 def display_budget(info):
@@ -124,7 +126,7 @@ def main():
         print_guide()
         return
 
-    print(f"Checking budget for key: {API_KEY[:4]}...{API_KEY[-4:] if API_KEY else ''}")
+    print("Checking budget for the configured API key")
     key_info = get_key_info(API_KEY, LITELLM_BASE_URL)
     display_budget(key_info)
 

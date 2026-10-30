@@ -2,8 +2,14 @@
 The single place that calls the LLM provider.
 
 Every attempt is checked against the spending caps first and recorded in a
-local ledger afterwards. Groq has no balance endpoint (budget_checker.py only
-works with a LiteLLM proxy), so the ledger is the record of spend.
+local ledger afterwards.
+
+- Direct Groq (api.groq.com): no balance endpoint exists, so the local ledger
+  is the record of spend, priced at Groq's published rates.
+- LiteLLM proxy (any other base URL): prices come from the proxy's own
+  /model/info, the model must be listed by /v1/models, and the key's spend and
+  max budget are read from /key/info before every attempt. Groq's rates are
+  never assumed for a proxy. If any of this cannot be verified, no call is made.
 """
 
 import os
@@ -11,8 +17,10 @@ import json
 import time
 import hashlib
 from pathlib import Path
+from urllib.parse import urlparse
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
+import requests
 from dotenv import load_dotenv
 
 REPO_DIR = Path(__file__).resolve().parent
@@ -34,13 +42,17 @@ PRICING_SOURCE = "https://console.groq.com/docs/model/openai/gpt-oss-120b (2026-
 LEDGER_PATH = REPO_DIR / ".llm_usage" / "ledger.jsonl"
 CACHE_DIR = REPO_DIR / ".llm_cache"
 
+GROQ_HOST = "api.groq.com"
+
 REASONING_EFFORT = "medium"
 TIMEOUT_SECONDS = 120
+PROXY_TIMEOUT_SECONDS = 15
 MAX_ATTEMPTS = 3               # first try plus two retries, for 429 / timeout / 5xx only
 MAX_BACKOFF_SECONDS = 30
 
 _sleep = time.sleep
 _disabled_reason = None        # set after a non-recoverable error; stops further calls
+_proxy_state = {}              # verified proxy pricing and the first spend reading of this run
 
 
 @dataclass
@@ -133,13 +145,79 @@ def _cache_path(payload: dict) -> Path:
     return CACHE_DIR / f"{key}.json"
 
 
+def is_proxy(api_base) -> bool:
+    """Anything other than direct Groq is treated as a LiteLLM proxy and must pass proxy verification."""
+    return bool(api_base) and urlparse(api_base).hostname != GROQ_HOST
+
+
+def served_model_name(model: str) -> str:
+    """litellm's openai/ adapter strips the prefix, so the proxy receives the bare name."""
+    return model.split("/", 1)[1] if model.startswith("openai/") else model
+
+
+def _proxy_get(api_base: str, api_key: str, path: str) -> dict:
+    """Authenticated read-only GET; the key goes only in the Authorization header, never in the URL."""
+    try:
+        response = requests.get(api_base.rstrip("/") + path, headers={"Authorization": f"Bearer {api_key}"},
+                                timeout=PROXY_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        return response.json()
+    except (requests.RequestException, ValueError) as e:
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        # the exception text is deliberately not included: it can contain request details
+        raise LLMError("budget_unverifiable",
+                       f"GET {path} failed: {type(e).__name__}" + (f" (HTTP {status})" if status else "")) from None
+
+
+def _proxy_pricing(api_base: str, api_key: str, model: str) -> dict:
+    """The proxy's own per-token prices for the configured model, verified once per run."""
+    if "pricing" not in _proxy_state:
+        name = served_model_name(model)
+        served = [m.get("id") for m in _proxy_get(api_base, api_key, "/v1/models").get("data", [])]
+        if name not in served:
+            raise LLMError("model_unavailable", f"proxy does not serve {name!r} to this key (serves {served})")
+        entry = next((m for m in _proxy_get(api_base, api_key, "/model/info").get("data", [])
+                      if m.get("model_name") == name), None)
+        info = (entry or {}).get("model_info") or {}
+        cost_in, cost_out = info.get("input_cost_per_token"), info.get("output_cost_per_token")
+        if not all(isinstance(c, (int, float)) and c > 0 for c in (cost_in, cost_out)):
+            raise LLMError("pricing_unavailable", f"proxy /model/info gives no prices for {name!r}")
+        _proxy_state["pricing"] = {
+            "input_per_m": cost_in * 1e6, "output_per_m": cost_out * 1e6,
+            "source": f"{api_base.rstrip('/')}/model/info ({datetime.now(timezone.utc).date().isoformat()})",
+        }
+    return _proxy_state["pricing"]
+
+
+def _proxy_spend(api_base: str, api_key: str):
+    """(spend recorded by the proxy for this key, the key's max budget or None)."""
+    data = _proxy_get(api_base, api_key, "/key/info")
+    info = data.get("info", data)
+    spend, max_budget = info.get("spend"), info.get("max_budget")
+    if not isinstance(spend, (int, float)):
+        raise LLMError("budget_unverifiable", "/key/info reports no spend")
+    return float(spend), (float(max_budget) if isinstance(max_budget, (int, float)) else None)
+
+
+def _effective_proxy_spend(proxy_spend: float) -> float:
+    """
+    The proxy may record spend with a delay, so never count less than its
+    first reading this run plus everything our ledger has recorded since.
+    """
+    if "baseline" not in _proxy_state:
+        _proxy_state["baseline"] = (proxy_spend, spent())
+    base_proxy, base_ledger = _proxy_state["baseline"]
+    return max(proxy_spend, base_proxy + spent() - base_ledger)
+
+
 def complete(messages: list, max_tokens: int, article_id: str = "") -> LLMResponse:
     """
     Send one chat request and return the reply.
 
     Raises:
         LLMError: with reason 'disabled', 'missing_config', 'pricing_unavailable',
-        'budget_exceeded', 'truncated', or 'llm_error:<type>'.
+        'model_unavailable', 'budget_unverifiable', 'budget_exceeded', 'truncated',
+        or 'llm_error:<type>'.
     """
     global _disabled_reason
     if _disabled_reason:
@@ -149,10 +227,6 @@ def complete(messages: list, max_tokens: int, article_id: str = "") -> LLMRespon
     if not model or not api_key:
         _disabled_reason = "LLM_MODEL_NAME or LLM_API_KEY not set"
         raise LLMError("missing_config", _disabled_reason)
-    price = PRICING.get(model)
-    if price is None:
-        _disabled_reason = f"no verified pricing for model {model}"
-        raise LLMError("pricing_unavailable", _disabled_reason)
 
     params = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0,
               "reasoning_effort": REASONING_EFFORT, "response_format": {"type": "json_object"}}
@@ -161,6 +235,19 @@ def complete(messages: list, max_tokens: int, article_id: str = "") -> LLMRespon
         with open(cache_file, "r", encoding="utf-8") as f:
             cached = json.load(f)
         return LLMResponse(**{**cached, "cost_usd": 0.0, "cached": True, "attempts": 0})
+
+    proxy = is_proxy(api_base)
+    try:
+        if proxy:
+            price = _proxy_pricing(api_base, api_key, model)
+            pricing_source = price["source"]
+        else:
+            price, pricing_source = PRICING.get(model), PRICING_SOURCE
+            if price is None:
+                raise LLMError("pricing_unavailable", f"no verified pricing for model {model}")
+    except LLMError as e:
+        _disabled_reason = str(e)
+        raise
 
     cap = spend_cap()
     charged, sent = 0.0, 0
@@ -172,13 +259,26 @@ def complete(messages: list, max_tokens: int, article_id: str = "") -> LLMRespon
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         worst = _worst_case(price, messages, max_tokens)
-        total = spent()
-        if total + worst > cap or total + worst > HARD_CAP_USD:
-            _disabled_reason = f"spent ${total:.4f}, next call could cost ${worst:.4f}, cap ${cap:.2f}"
+        total = spent()                      # this phase's spend, from our ledger
+        account, hard_limit, proxy_spend = total, HARD_CAP_USD, None
+        if proxy:
+            try:
+                proxy_spend, max_budget = _proxy_spend(api_base, api_key)
+            except LLMError as e:
+                _disabled_reason = str(e)
+                raise failure(e.reason, str(e))
+            account = _effective_proxy_spend(proxy_spend)
+            if max_budget is not None:
+                hard_limit = min(hard_limit, max_budget)
+        if total + worst > cap or account + worst > hard_limit:
+            _disabled_reason = (f"phase spend ${total:.4f} (cap ${cap:.2f}), account spend ${account:.4f} "
+                                f"(limit ${hard_limit:.2f}), next call could cost ${worst:.4f}")
             raise failure("budget_exceeded", _disabled_reason)
 
         entry = {"time": datetime.now(timezone.utc).isoformat(), "article_id": article_id,
-                 "model": model, "attempt": attempt, "pricing_source": PRICING_SOURCE}
+                 "model": model, "attempt": attempt, "pricing_source": pricing_source}
+        if proxy:
+            entry["proxy_spend_before"] = proxy_spend
         sent += 1
         try:
             response = _completion(**params, api_key=api_key, api_base=api_base,

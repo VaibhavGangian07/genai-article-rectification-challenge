@@ -56,6 +56,24 @@ class TestReplaceEvidence(unittest.TestCase):
     def test_fact_type_must_match(self):
         self.assertEqual(check("replace", "in March 2024", "in Lords 2024"), (None, "type_mismatch"))
 
+    def test_date_change_may_add_a_day_number(self):
+        body = "Apple unveiled the phones at WWDC in June 2025, the company said.\nNext."
+        source = "Apple launched the phones at its Awe Dropping event on September 9, the company said."
+        self.assertEqual(check("replace", "at WWDC in June 2025", "at its Awe Dropping event on September 9, 2025",
+                               evidence=source, body=body, source=source), ("source_supported", None))
+        # a number replacing a non-date fact is still a type mismatch
+        self.assertEqual(check("replace", "led by coach John Smith", "led by coach 42", evidence=EVIDENCE),
+                         (None, "type_mismatch"))
+
+    def test_markdown_emphasis_in_source_does_not_block_a_quote(self):
+        body = "He was a 28-year-old man from Barwala, the paper said."
+        source = "The deceased was identified as Kapil, a 26-year-old man from Brah Kalan, the _Hindustan Times_ reported."
+        quote = "The deceased was identified as Kapil, a 26-year-old man from Brah Kalan, the Hindustan Times reported."
+        self.assertEqual(check("replace", "a 28-year-old man", "a 26-year-old man", evidence=quote, body=body,
+                               source=source), ("source_supported", None))
+        self.assertEqual(check("replace", "a 28-year-old man", "a 26-year-old man", evidence=quote.replace("Kapil", "Raj"),
+                               body=body, source=source), (None, "evidence_not_found"))
+
     def test_multi_word_entity_must_appear_as_a_phrase(self):
         body = "The probe was led by Inspector Rajeev P. Menon on Monday."
         source = "He was being questioned by the investigation team led by Inspector Kiran C. Nair."

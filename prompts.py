@@ -8,11 +8,13 @@ Do NOT edit: spelling variants, punctuation, currency formatting, tone, word cho
 ANNOTATIONS, when present, are hints written by another system. They may be wrong or incomplete. Use one only if it points at real text in the ARTICLE. Prefer evidence from the SOURCE; quote the annotation's correction only when the SOURCE does not mention the fact at all.
 
 Rules for every edit:
-1. "find" is copied character for character from the ARTICLE, on a single line, and occurs exactly once. Include a few surrounding words if the wrong text appears more than once, and give each occurrence its own edit.
+1. "find" is copied character for character from the ARTICLE, on a single line, and must occur exactly once in the whole ARTICLE. Before answering, check every "find" against the whole ARTICLE. If the wrong text appears several times (for example in a heading and in a paragraph), return one edit per occurrence and make each "find" unique by including the neighbouring words of that occurrence, e.g. "Ali: 5/30 vs Bangladesh, Karachi" and "Hasan Ali took 5/30 in Karachi".
 2. Keep "find" as short as possible while unique; "replace" changes only the wrong words and keeps the surrounding wording, style and punctuation.
-3. "evidence" is an exact quote of the full sentence from the SOURCE (or the annotation's correction) that states the correct fact. Do not shorten it to the fact alone.
-4. Use "op": "delete" only to remove a clause that a linked annotation flags or that the SOURCE clearly contradicts. Include the leading space or comma in "find" so the sentence still reads correctly. Never delete a whole line.
-5. If you are not sure, make no edit.
+3. When a wrong claim is written as a contrast or comparison ("X, not Y", "X rather than Y"), fix the whole phrase in one edit so the sentence stays consistent.
+4. "evidence" is the complete SOURCE sentence that states the correct fact, copied character for character from its first word to its final punctuation mark. Never shorten it, never end it early, never join it with another sentence and never paraphrase. When several source sentences state the fact, choose the one that shares the most words with the ARTICLE sentence you are fixing.
+5. Use an annotation as evidence only when the SOURCE does not state the fact. Then "evidence" is the text of that annotation's "correction" field, copied exactly (never its "error" field), and "evidence_from" is "annotation".
+6. Use "op": "delete" only to remove a clause that a linked annotation flags or that the SOURCE clearly contradicts. Include the leading space or comma in "find" so the sentence still reads correctly. Never delete a whole line.
+7. If you are not sure, make no edit.
 
 Reply with only this JSON object:
 {"edits": [{"op": "replace" or "delete", "find": "...", "replace": "... (empty for delete)", "evidence": "...", "evidence_from": "source" or "annotation", "reason": "short explanation"}]}

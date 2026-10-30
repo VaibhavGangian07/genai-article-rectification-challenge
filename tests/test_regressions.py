@@ -23,7 +23,8 @@ import rectification_system
 from llm_client import LLMError, LLMResponse
 from article_utils import strip_annotations, find_annotation_leak
 
-ENV = {"LLM_MODEL_NAME": "groq/openai/gpt-oss-120b", "LLM_API_KEY": "dummy-test-key", "LLM_API_BASE": "http://127.0.0.1:9"}
+ENV = {"LLM_MODEL_NAME": "groq/openai/gpt-oss-120b", "LLM_API_KEY": "dummy-test-key",
+       "LLM_API_BASE": "https://api.groq.com/openai/v1"}   # direct-Groq mode; no request ever leaves the test
 MESSAGES = [{"role": "user", "content": "x" * 300}]
 PRICE = llm_client.PRICING[ENV["LLM_MODEL_NAME"]]
 MAPPING = {a["article_id"]: a for a in json.loads((ROOT / "article_mapping.json").read_text())}
@@ -73,6 +74,7 @@ class ClientCase(unittest.TestCase):
         os.environ.pop("MAX_SPEND_USD", None)
         self.completion = mock.patch.object(llm_client, "_completion",
                                             side_effect=AssertionError("unexpected API call")).start()
+        mock.patch.object(llm_client.requests, "get", side_effect=AssertionError("unexpected HTTP request")).start()
 
     def entries(self):
         return [json.loads(l) for l in self.ledger.read_text().splitlines()] if self.ledger.exists() else []

@@ -263,8 +263,8 @@ def _load(article_id: str, mapping: dict):
             read_text(REFERENCE_DIR / f'{article_id}.txt'))
 
 
-def evaluate(candidate_dir: Path = None, label: str = 'candidate', output_dir: Path = OUTPUT_DIR):
-    """Score every reference article in each mode and write the reports."""
+def evaluate(candidate_dir: Path = None, label: str = 'candidate', output_dir: Path = OUTPUT_DIR, splits=None):
+    """Score the reference articles (all splits, or only those in splits) in each mode and write the reports."""
     output_dir = Path(output_dir).resolve()
     if any(output_dir == p or output_dir.is_relative_to(p) for p in PROTECTED):
         raise ValueError(f'Refusing to write evaluation output into {output_dir}')
@@ -274,6 +274,8 @@ def evaluate(candidate_dir: Path = None, label: str = 'candidate', output_dir: P
 
     articles = []
     for split, ids in SPLIT.items():
+        if splits and split not in splits:
+            continue
         for article_id in ids:
             ai, source, reference = _load(article_id, mapping)
             body, raw = split_annotations(ai)
@@ -457,8 +459,9 @@ def main():
     parser.add_argument('--candidate-dir', type=Path, help='Folder of rectified article_XXX.txt files to score')
     parser.add_argument('--label', default='candidate', help='Name for the candidate mode in the reports')
     parser.add_argument('--output-dir', type=Path, default=OUTPUT_DIR, help='Where to write the reports')
+    parser.add_argument('--split', choices=sorted(SPLIT), help='Score only this split (default: all)')
     args = parser.parse_args()
-    summary, _ = evaluate(args.candidate_dir, args.label, args.output_dir)
+    summary, _ = evaluate(args.candidate_dir, args.label, args.output_dir, [args.split] if args.split else None)
     for mode, groups in summary.items():
         s = groups['all']
         print(f"{mode:12} exact={s['exact_match']}/{s['articles']} similarity={_fmt(s['mean_similarity'])} "
