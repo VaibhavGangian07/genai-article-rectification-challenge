@@ -1,0 +1,2 @@
+# Tokenizer data is hash-checked by tiktoken; line-ending conversion would corrupt it
+tokenizers/* binary

@@ -5,7 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from article_utils import split_annotations, strip_annotations
+from article_utils import (split_annotations, strip_annotations, parse_annotations, find_annotation_leak,
+                           normalize_with_map)
 
 BODY = "## Title\n### Synopsis\nFirst paragraph.\n\n## Section\nSecond paragraph."
 
@@ -110,6 +111,60 @@ class TestAnnotationRemovalOnDataset(unittest.TestCase):
                 body, annotations = split_annotations(self.articles[article_id])
                 self.assertIsNotNone(annotations)
                 self.assertTrue(annotations.strip().startswith("["))
+
+
+class TestAnnotationParsing(unittest.TestCase):
+
+    def test_valid_json(self):
+        raw = '\n[\n {"location": "p1", "error": "\\"on Monday\\"", "correction": "\\"on Tuesday\\"", "error_type": "t"}\n]'
+        self.assertEqual(parse_annotations(raw), [{"error": '"on Monday"', "correction": '"on Tuesday"'}])
+
+    def test_malformed_json_falls_back_to_fields(self):
+        raw = ('\n[\n    {\n        "location": "p1",\n        "error": \\"broken quote\\",\n'
+               '        "correction": "fixed value",\n    },\n    {\n        "error": "second",\n'
+               '        "correction": "two"\n    }\n')
+        self.assertEqual(parse_annotations(raw), [{"error": "broken quote", "correction": "fixed value"},
+                                                  {"error": "second", "correction": "two"}])
+
+    def test_empty_or_missing(self):
+        for raw in (None, "", "\n[]\n```"):
+            with self.subTest(raw=raw):
+                self.assertEqual(parse_annotations(raw), [])
+
+    def test_every_annotated_article_yields_hints(self):
+        for path in sorted((ROOT / "ai_generated_articles").glob("article_*.txt")):
+            raw = split_annotations(path.read_text(encoding="utf-8"))[1]
+            if raw is not None and raw.strip().strip("`").strip() != "[]":
+                with self.subTest(article=path.stem):
+                    entries = parse_annotations(raw)
+                    self.assertTrue(entries)
+                    self.assertTrue(all(e["error"] and e["correction"] for e in entries))
+
+
+class TestLeakDetection(unittest.TestCase):
+
+    def test_detects_annotation_artifacts(self):
+        for text in ("Body\n\n**Error Annotations:**\n[]", "Body\n## Error Annotations:", 'x "correction": "y"',
+                     'x "location": "p1"', "x ```json"):
+            with self.subTest(text=text):
+                self.assertIsNotNone(find_annotation_leak(text))
+
+    def test_clean_articles_pass(self):
+        for path in sorted((ROOT / "reference_rectified").glob("article_*.txt")):
+            with self.subTest(article=path.stem):
+                self.assertIsNone(find_annotation_leak(path.read_text(encoding="utf-8")))
+
+
+class TestNormalizeWithMap(unittest.TestCase):
+
+    def test_maps_back_to_original_positions(self):
+        text = "said “no” —  then left"
+        norm, index_map = normalize_with_map(text)
+        self.assertEqual(norm, 'said "no" - then left')
+        self.assertEqual(len(norm), len(index_map))
+        for i, ch in enumerate(norm):
+            if ch not in "\"- ":
+                self.assertEqual(text[index_map[i]], ch)
 
 
 if __name__ == "__main__":
