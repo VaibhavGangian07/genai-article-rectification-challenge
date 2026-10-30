@@ -14,7 +14,7 @@ from prompts import build_messages, repair_messages
 from edits import parse_edits, locate, resolve_overlaps, apply_edits, EditParseError
 from validation import check_edit, check_output
 
-MAX_OUTPUT_TOKENS = 4096
+MAX_OUTPUT_TOKENS = 8192         # room for reasoning on heavily annotated articles; 4096 truncated article_004
 
 
 @dataclass
