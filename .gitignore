@@ -63,6 +63,10 @@ dmypy.json
 
 # Project specific
 detected_errors/
+.venv/
+eval_outputs/
+.llm_usage/
+.llm_cache/
 rectified_articles/article_011.txt
 rectified_articles/article_012.txt
 rectified_articles/article_013.txt

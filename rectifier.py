@@ -1,7 +1,12 @@
+import sys
 import json
 import argparse
 from pathlib import Path
+from article_utils import strip_annotations, configure_console
 from rectification_system import run
+
+# Human-rectified reference articles; never written to by the pipeline
+REFERENCE_DIR = Path(__file__).resolve().parent / 'reference_rectified'
 
 def get_article_mapping(article_id: str):
     # Load article mapping to get file paths
@@ -29,10 +34,42 @@ def save_rectified_article(article_id: str, rectified_content: str):
     
     # Ensure output directory exists
     output_path = Path(fpath)
+    if output_path.resolve().is_relative_to(REFERENCE_DIR):
+        raise ValueError(f"Refusing to overwrite reference article: {fpath}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     with open(fpath, 'w', encoding='utf-8') as f:
         f.write(rectified_content)
+
+def log_failure(article_id: str, message: str):
+    print(f"[FAIL] {article_id}: {message}", file=sys.stderr)
+
+def _rectify(article_id: str):
+    """
+    Rectify an article, falling back to the annotation-stripped AI text if
+    the rectifier fails or returns nothing.
+    
+    Returns:
+        tuple: (rectified content, True if the fallback was used)
+    """
+    ai_generated_content = get_ai_generated_article(article_id)
+    
+    try:
+        # PLUG YOUR CUSTOM RECTIFIER HERE
+        rectified_content = run(ai_generated_content)
+        ###################################
+        if not isinstance(rectified_content, str) or not rectified_content.strip():
+            raise ValueError("rectifier returned empty output")
+        used_fallback = False
+    except Exception as e:
+        log_failure(article_id, f"{type(e).__name__}: {e} -- writing annotation-stripped fallback")
+        rectified_content = strip_annotations(ai_generated_content)
+        used_fallback = True
+    
+    save_rectified_article(article_id, rectified_content)
+    
+    print(f"[{'FALLBACK' if used_fallback else 'OK'}] Rectified {article_id}")
+    return rectified_content, used_fallback
 
 def rectify_article(article_id: str):
     """
@@ -44,17 +81,38 @@ def rectify_article(article_id: str):
     Returns:
         str: The rectified article content
     """
+    return _rectify(article_id)[0]
+
+
+def process_articles(articles: list):
+    """
+    Rectify each article in turn, continuing past failures.
     
-    ai_generated_content = get_ai_generated_article(article_id)
+    Returns:
+        dict: article IDs grouped by outcome ('ok', 'fallback', 'failed')
+    """
+    outcomes = {'ok': [], 'fallback': [], 'failed': []}
+    total = len(articles)
     
-    # PLUG YOUR CUSTOM RECTIFIER HERE
-    rectified_content = run(ai_generated_content)
-    ###################################
+    for i, article in enumerate(articles):
+        article_id = article['article_id']
+        
+        print(f"\nProcessing {article_id} ({i+1}/{total})...")
+        
+        try:
+            _, used_fallback = _rectify(article_id)
+            outcomes['fallback' if used_fallback else 'ok'].append(article_id)
+        except Exception as e:
+            log_failure(article_id, f"{type(e).__name__}: {e} -- no output written")
+            outcomes['failed'].append(article_id)
     
-    save_rectified_article(article_id, rectified_content)
-    
-    print(f"✓ Rectified {article_id}")
-    return rectified_content
+    print(f"\n{'='*50}")
+    print(f"Completed! Processed {total} articles.")
+    print(f"  Rectified: {len(outcomes['ok'])}")
+    print(f"  Fallback:  {len(outcomes['fallback'])} {' '.join(outcomes['fallback'])}")
+    print(f"  Failed:    {len(outcomes['failed'])} {' '.join(outcomes['failed'])}")
+    print(f"{'='*50}")
+    return outcomes
 
 
 def test_rectifier(count: int):
@@ -69,53 +127,30 @@ def test_rectifier(count: int):
         articles = json.load(f)
     
     # Test on first 'count' articles
-    for i, article in enumerate(articles[:count]):
-        if i >= count:
-            break
-        
-        article_id = article['article_id']
-        
-        print(f"\nProcessing {article_id} ({i+1}/{count})...")
-        
-        try:
-            rectify_article(article_id)
-        except Exception as e:
-            print(f"✗ Error processing {article_id}: {str(e)}")
+    return process_articles(articles[:count])
 
 
 def rectify_all():
     """
-    Generate rectified articles for all 100 articles.
+    Generate rectified articles for all articles in the mapping.
     """
     # Load article mapping
     with open('article_mapping.json', 'r') as f:
         articles = json.load(f)
     
-    total = len(articles)
-    
-    for i, article in enumerate(articles):
-        article_id = article['article_id']
-        
-        print(f"\nProcessing {article_id} ({i+1}/{total})...")
-        
-        try:
-            rectify_article(article_id)
-        except Exception as e:
-            print(f"✗ Error processing {article_id}: {str(e)}")
-    
-    print(f"\n{'='*50}")
-    print(f"Completed! Processed {total} articles.")
-    print(f"{'='*50}")
+    return process_articles(articles)
 
 
 if __name__ == "__main__":
+    configure_console()
+    
     parser = argparse.ArgumentParser(
         description="Rectify AI-generated articles by fixing errors and inaccuracies."
     )
     parser.add_argument(
         'command',
         choices=['test', 'rectify-all'],
-        help='Command to execute: "test" to process first 16 articles, "rectify-all" to process all 100 articles'
+        help='Command to execute: "test" to process first 16 articles, "rectify-all" to process all 104 articles'
     )
     parser.add_argument(
         '--count',
@@ -130,5 +165,5 @@ if __name__ == "__main__":
         print(f"Testing rectification system on first {args.count} articles...")
         test_rectifier(count=args.count)
     elif args.command == 'rectify-all':
-        print("Processing all 100 articles...")
+        print("Processing all 104 articles...")
         rectify_all()

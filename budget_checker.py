@@ -3,6 +3,7 @@ import sys
 import argparse
 import requests
 from dotenv import load_dotenv
+from article_utils import configure_console
 
 # Load environment variables from .env file
 load_dotenv()
@@ -128,4 +129,5 @@ def main():
     display_budget(key_info)
 
 if __name__ == "__main__":
+    configure_console()
     main()
