@@ -201,6 +201,28 @@ class TestBudget(LLMClientTestCase):
         self.completion.assert_not_called()
 
 
+class TestCacheOnly(LLMClientTestCase):
+
+    def test_cached_reply_is_returned_without_any_request(self):
+        self.completion.side_effect = None
+        self.completion.return_value = response()
+        llm_client.complete(MESSAGES, max_tokens=1000)
+        with mock.patch.dict(os.environ, {"LLM_CACHE_ONLY": "1"}):
+            again = llm_client.complete(MESSAGES, max_tokens=1000)
+        self.assertEqual((again.cached, again.cost_usd, self.completion.call_count), (True, 0.0, 1))
+
+    def test_cache_miss_never_contacts_the_provider_or_proxy(self):
+        for base in (ENV["LLM_API_BASE"], "https://proxy.example.test/"):
+            with self.subTest(base=base), mock.patch.dict(os.environ, {"LLM_CACHE_ONLY": "1", "LLM_API_BASE": base}):
+                with self.assertRaises(LLMError) as ctx:
+                    llm_client.complete(MESSAGES, max_tokens=1000)
+                self.assertEqual(ctx.exception.reason, "cache_miss")
+        self.completion.assert_not_called()
+        llm_client.requests.get.assert_not_called()
+        self.assertEqual(self.entries(), [])
+        self.assertIsNone(llm_client._disabled_reason)   # a miss does not stop the other articles
+
+
 class TestOfflineConfiguration(unittest.TestCase):
 
     def test_litellm_uses_bundled_price_map_and_tokenizer(self):

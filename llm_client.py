@@ -216,7 +216,7 @@ def complete(messages: list, max_tokens: int, article_id: str = "") -> LLMRespon
 
     Raises:
         LLMError: with reason 'disabled', 'missing_config', 'pricing_unavailable',
-        'model_unavailable', 'budget_unverifiable', 'budget_exceeded', 'truncated',
+        'model_unavailable', 'budget_unverifiable', 'budget_exceeded', 'truncated', 'cache_miss',
         or 'llm_error:<type>'.
     """
     global _disabled_reason
@@ -235,6 +235,8 @@ def complete(messages: list, max_tokens: int, article_id: str = "") -> LLMRespon
         with open(cache_file, "r", encoding="utf-8") as f:
             cached = json.load(f)
         return LLMResponse(**{**cached, "cost_usd": 0.0, "cached": True, "attempts": 0})
+    if os.getenv("LLM_CACHE_ONLY") == "1":   # reproduce a run from its cached replies; never contact the provider
+        raise LLMError("cache_miss", "LLM_CACHE_ONLY=1 and no cached reply for this request")
 
     proxy = is_proxy(api_base)
     try:

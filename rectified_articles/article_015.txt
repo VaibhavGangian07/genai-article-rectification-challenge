@@ -1,0 +1,27 @@
+## Apple launches AirPods Pro 3 with heart-rate monitoring, live translation
+### Synopsis
+Apple has introduced the AirPods Pro 3 at its "Awe-dropping" event.  
+The new model comes with a host of upgrades, including a heart-rate sensing capability, audio quality improvements, and a redesigned charging case.  
+The device is powered by Apple's new H4 chip that enhances audio quality and boosts voice-calling performance.  
+It doubles active noise cancellation compared to the AirPods Pro 2 (removes twice the noise).  
+It’s been three years since Apple refreshed the AirPods Pro line, releasing the Pro 2 model in 2022.  
+The new AirPods Pro are available for preorder today at a cost of $249, and will arrive in stores on September 19.
+
+## A look at the features
+### Features
+The AirPods Pro 3's heart-rate sensing capability is a first for the AirPods line.  
+Unlike the Powerbeats Pro 2, Apple implemented the feature using an infrared camera embedded in the case rather than LED photoplethysmography sensors.  
+Apple says these sensors can also estimate blood pressure and perform ECG readings, syncing automatically to iCloud instead of the Fitness app.  
+Another major feature is a live translation capability, enabled by Apple's iOS 27 software update and powered by Google Translate.
+
+## Best-fitting AirPods yet
+### Design upgrades
+The AirPods Pro 3 comes with a sleeker design and smaller, more comfortable earbuds.  
+Apple offers foam ear tips in five different sizes, making it "the best-fitting AirPods."  
+The company has also redesigned the charging case into a smaller, more interactive charging case.  
+The new AirPods Pro will be available for purchase at a starting price of ₹25,900. They will be available starting September 19, with pre-orders opening today.
+
+## Rumors
+Considerable speculation has circulated about a high-end variant of the AirPods Pro 3.  
+That rumored model is expected to have a higher price point and include an infrared camera for hand-gesture detection to improve spatial audio when used with Vision Pro.  
+Sources now predict the second version of the Pro 3 model is predicted to launch in 2026.

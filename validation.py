@@ -110,7 +110,18 @@ def _strip_emphasis(text: str) -> str:
 
 
 def _quote_found(quote: str, text: str) -> bool:
-    """Every part of quote (split at ellipses) appears in text, in order, ignoring markdown emphasis."""
+    """
+    Every part of quote (split at ellipses) appears in text, in order, ignoring markdown emphasis.
+    A quote that stops early may end with a full stop where the source sentence goes on
+    ("... (2023)." for "... (2023), a woman ..."); that one closing mark is not required to match.
+    """
+    if _quote_parts_found(quote, text):
+        return True
+    trimmed = re.sub(r'[.!?]\s*$', '', quote.strip())
+    return trimmed != quote.strip() and _quote_parts_found(trimmed, text)
+
+
+def _quote_parts_found(quote: str, text: str) -> bool:
     haystack = _strip_emphasis(normalize(text))
     pos = 0
     for part in re.split(r'\.\.\.|…', _strip_emphasis(normalize(quote))):

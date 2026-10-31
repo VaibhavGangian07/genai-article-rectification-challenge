@@ -207,6 +207,101 @@ class TestAnnotationCommentary(unittest.TestCase):
         self.assertEqual(check("replace", "won 3 matches", "won 5 matches"), ("source_supported", None))
 
 
+# the 14 edits from the Phase 4 run that were rejected only because the quote ended with a full stop
+# where the source sentence continues (article id, find, replace, evidence as the model sent them)
+F1_EDITS = [
+    ('article_003', 'from 18% to 12%',
+     'from 28% to 18%',
+     'With GST rates on affordable cars reduced to 18% from 28%.'),
+    ('article_024', 'The director plans to decide which film to shoot next by March 2025, and both Coal Emperor and Gadar 3 are said to have completed scripts.',
+     'A call on his immediate next will be taken by the end of this year, but the three scripts are presently being worked upon simultaneously.',
+     'A call on his immediate next will be taken by the end of this year, but the three scripts are presently being worked upon simultaneously.'),
+    ('article_025', 'It now features a 24MP Fusion main camera and another 12MP ultra-wide lens',
+     'It now features a 48MP Fusion main camera and a 48MP ultra-wide lens',
+     'For optics, the iPhone 17 comes with a dual rear camera system, headlined by a 48-megapixel Fusion main camera ... Accompanying it is a 48-megapixel Fusion Ultra-Wide camera.'),
+    ('article_047', 'to get a 36-hour battery life',
+     'to get an all-day ~18-hour battery life',
+     'The S10 chip also enables SE 3 to get all-day 18-hour battery life.'),
+    ('article_050', 'uniform GST of 28%',
+     'uniform GST of 18%',
+     'Additionally, all auto components will now carry a uniform GST of 18%.'),
+    ('article_057', 'Ghana',
+     'Nigeria',
+     'The Times, citing UK officials, stated that India, Pakistan, and Nigeria are among the most resistant nations.'),
+    ('article_057', '2,070,600 Indians overstaying their visas up to 2021',
+     '20,706 Indians overstaying their visas in the year to 2020',
+     'India tops the list of visa overstayers, with 20,706 Indians failing to leave in the year to 2020.'),
+    ('article_060', 'Emily Blunt, an Oscar winner for Oppenheimer (2023),',
+     'Emily Blunt, an Oscar nominee for Oppenheimer (2023),',
+     'Emily Blunt, an Oscar nominee for “Oppenheimer” (2023) delivers an effortless turn as Kerr’s girlfriend Dawn Staples.'),
+    ('article_063', 'now costs ₹68.1 lakh after a price cut of nearly ₹3.8 lakh',
+     'now costs ₹67.1 lakh after a price cut of nearly ₹4.8 lakh',
+     'The refreshed XC60 now costs ₹67.1 lakh after a price drop of nearly ₹4.8 lakh.'),
+    ('article_065', 'heard on Monday',
+     'heard on Tuesday',
+     'The matter came up on Tuesday before Justice Tejas Karia.'),
+    ('article_065', 'Justice Ritu Karia',
+     'Justice Tejas Karia',
+     'The matter came up on Tuesday before Justice Tejas Karia.'),
+    ('article_098', 'The nine-time champions have',
+     'The eight-time champions have',
+     'The eight-time Asia Cup champions have been battling the hot and humid conditions in Dubai ahead of their tournament opener against the hosts on September 10.'),
+    ('article_098', 'During their last visit to Dubai for the ICC World Cup in 2019, India employed a four-pronged pace attack.',
+     'India successfully used a four-pronged spin attack during their last visit to Dubai at the ICC Champions Trophy event earlier this year.',
+     'India successfully used a four-pronged spin attack during their last visit to Dubai at the ICC Champions Trophy event earlier this year.'),
+    ('article_100', 'up to 40 million mobile phones simultaneously',
+     'at least four million mobile phones simultaneously',
+     'Pakistan‘s spy agencies can monitor at least 4 million mobile phones at a time through its Lawful Intercept Management System (LIMS).'),
+]
+
+
+class TestQuoteEndingEarly(unittest.TestCase):
+    """A quote may stop with a full stop where the source sentence continues; every word must still match."""
+
+    SOURCE = "The matter came up on Tuesday before Justice Tejas Karia, who orally indicated an interim order."
+    BODY = "The matter was heard on Monday by Justice Tejas Karia in Delhi.\nNext."
+
+    def edit(self, evidence):
+        return check("replace", "heard on Monday", "heard on Tuesday", evidence=evidence, body=self.BODY, source=self.SOURCE)
+
+    def test_edits_from_the_phase_4_run_are_accepted(self):
+        self.assertEqual(len(F1_EDITS), 14)
+        for article_id, find, new, evidence in F1_EDITS:
+            with self.subTest(article=article_id, find=find[:30]):
+                self.assertEqual(check_article(article_id, find, new, evidence), ("source_supported", None))
+
+    def test_closing_mark_where_the_sentence_continues(self):
+        for evidence in ("The matter came up on Tuesday before Justice Tejas Karia.",
+                         "The matter came up on Tuesday before Justice Tejas Karia!",
+                         "The matter came up on Tuesday before Justice Tejas Karia?"):
+            with self.subTest(evidence=evidence):
+                self.assertEqual(self.edit(evidence), ("source_supported", None))
+
+    def test_words_must_still_match_exactly(self):
+        for evidence in ("The matter came up on Tuesday before Justice Tejas Kariah.",     # changed word
+                         "The matter came up Tuesday before Justice Tejas Karia.",           # dropped word
+                         "The case came up on Tuesday before Justice Tejas Karia.",          # replaced word
+                         "The matter came up on Tuesday before Justice Tejas Karia, who said so."):  # invented ending
+            with self.subTest(evidence=evidence):
+                self.assertEqual(self.edit(evidence), (None, "evidence_not_found"))
+
+    def test_only_one_sentence_final_mark_is_ignored(self):
+        self.assertEqual(self.edit("The matter came up on Tuesday before Justice Tejas Karia.."), (None, "evidence_not_found"))
+        for evidence in ("The matter came up on Tuesday before Justice Tejas Karia;",
+                         "The matter came up on Tuesday before Justice Tejas Karia:"):
+            with self.subTest(evidence=evidence):
+                self.assertEqual(self.edit(evidence), (None, "evidence_not_found"))
+
+    def test_other_rules_still_apply_to_a_trimmed_quote(self):
+        source = "The court heard arguments on Tuesday about ticket prices, officials said."
+        self.assertEqual(check("replace", "heard on Monday", "heard on Tuesday", body=self.BODY, source=source,
+                               evidence="The court heard arguments on Tuesday about ticket prices."),
+                         (None, "evidence_not_slot_aligned"))
+        self.assertEqual(self.edit("Tuesday before Karia."), (None, "evidence_not_found"))
+        self.assertEqual(check("replace", "heard on Monday", "heard on Tuesday", body=self.BODY, source=self.SOURCE,
+                               evidence="on Tuesday."), (None, "evidence_too_short"))
+
+
 class TestDeletion(unittest.TestCase):
 
     BODY = "Apple unveiled the phones at WWDC in June 2025, the company said, with critics calling it bold.\nNext line."

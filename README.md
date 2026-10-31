@@ -92,6 +92,113 @@ Your code must save the final output to the rectified_articles/ directory.
 - **File Naming**: The filenames must match the original IDs (e.g., article_001.txt).
 - **Content**: The files should contain only the rectified article text. Do not include markdown code blocks (like ```) or JSON artifacts in the final text files.
 
+## Solution: How This AI Editor Works
+
+### Quick start
+
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt          # litellm, python-dotenv, requests
+cp env.example .env                      # then put your real key in .env
+python budget_checker.py                 # optional: confirm the key and remaining budget
+python rectifier.py rectify-all          # writes rectified_articles/article_001.txt ... article_104.txt
+```
+
+Tested with Python 3.12 and 3.14. No system-level packages or other third-party services are used:
+the only external service is the provided LiteLLM proxy. The tokenizer file litellm needs is bundled in
+`tokenizers/`, so nothing is downloaded at run time.
+
+### API configuration (`.env`)
+
+| Variable | Meaning | Value |
+| --- | --- | --- |
+| `LLM_API_KEY` | key for the LiteLLM proxy (never commit it; `.env` is git-ignored) | from the assignment email |
+| `LLM_API_BASE` | proxy base URL | `https://recllm.brahmastra.tech/` |
+| `LLM_MODEL_NAME` | LiteLLM model id | `openai/gpt-oss-120b` |
+| `MAX_SPEND_USD` | optional spending cap for this checkout (default `0.50`, never above `3.00`) | `0.50` |
+
+### Output
+
+`python rectifier.py rectify-all` writes one file per article to `rectified_articles/<article_id>.txt`
+(104 files, UTF-8, article text only: no annotation block, JSON or code fences). The human-corrected
+examples are kept unchanged in `reference_rectified/` (checksums in `SHA256SUMS.txt`), and the
+pipeline refuses to write there.
+
+At the end the command prints how many articles were rectified, had no change, had all proposed edits
+rejected, fell back or failed, plus the LLM requests, tokens and cost. It exits with code 1 if any article
+fell back or failed, otherwise 0. `no_change` and `no_valid_edits` are normal outcomes, not failures.
+Every article that falls back still gets an output file.
+
+### Architecture
+
+The LLM never rewrites the article. It proposes small edits, and Python checks and applies them.
+
+```
+rectifier.py            CLI entry point; one run() per article, statuses, fallback, safe saving
+rectification_system.py run(): split off annotations -> ask for edits -> validate -> apply -> check output
+prompts.py              the prompt: return JSON edits {op, find, replace, evidence, evidence_from}
+llm_client.py           the only place that calls the LLM: budget guard, retries, ledger, reply cache
+edits.py                parse the JSON, locate each "find" uniquely on one line, apply right to left
+validation.py           evidence checks for each edit, and final output checks
+article_utils.py        annotation parsing and removal, leak detection, text normalisation
+evaluate.py             offline scoring against the 10 human references (precision/recall/F1)
+```
+
+For each article:
+
+1. The `**Error Annotations:**` block is split off the AI article. Annotations are used only as hints.
+2. One request (`reasoning_effort=medium`, temperature 0, JSON mode, up to 8192 output tokens) asks for
+   minimal edits, each with an exact quote of its evidence. A reply that is not valid JSON gets one repair request.
+3. Each edit must match exactly one place in the article, on a single line. Overlapping edits are dropped.
+4. Each edit must be backed by evidence (`validation.py`):
+   - the quote is found word for word in the source, or in the `correction` of the annotation that points at that text;
+   - every new name, number, date or negation appears in the quote and replaces the same kind of fact,
+     the quote shares nearby words with the article line, and the quote contradicts the old value;
+   - at most two new words beyond what the quote supports. Annotation-backed edits may add no editorial
+     marks or wording, and at most two words beyond the corrected values;
+   - deletions need a linked annotation, or a source quote that states a different value. A claim that is
+     merely missing from the source is never deleted.
+
+   Anything that cannot be established is skipped, not guessed.
+5. Accepted edits are applied and the result is checked: no annotation text, the same number of lines,
+   headings intact. Any critical problem makes the whole article fall back.
+
+Statuses: `rectified` (edits applied), `no_change` (no errors proposed), `no_valid_edits` (every proposal
+rejected), `fallback` (for example a truncated reply or a budget stop: the annotation-stripped AI text is
+written and **not** counted as corrected), and `failed` (no output written). Only `rectified` counts as a correction.
+
+### Budget and safety
+
+- Before **every** attempt, including retries, the request's worst-case cost (the whole prompt plus all
+  8192 output tokens) is checked against `MAX_SPEND_USD` and the hard-coded `HARD_CAP_USD = 3.00`.
+  With the proxy, the key's spend and budget are also read from `/key/info` before every attempt, and
+  prices come from the proxy's own `/model/info`. If prices or spend cannot be verified, no call is made.
+- Retries happen only after rate limits, timeouts and server errors (at most 2, with backoff). There is no
+  retry after authentication errors, bad requests, budget stops or truncated replies.
+- Every attempt is recorded in `.llm_usage/ledger.jsonl`, and replies are cached in `.llm_cache/` so that
+  re-running costs nothing. Both folders are git-ignored.
+- The API key is sent only in the `Authorization` header and is never printed or logged.
+- A full run of 104 articles made 104 requests (278k input and 188k output tokens) and cost $0.15.
+- `LLM_CACHE_ONLY=1 python rectifier.py rectify-all` rebuilds every output from the cached replies and
+  never contacts the provider. A missing reply makes that article fall back and is reported, so it costs nothing.
+
+### Submitted results
+
+The 104 files in `rectified_articles/` come from the run above: 99 rectified, 1 with no errors proposed,
+4 where every proposed edit was rejected, and 0 fallbacks or failures. Scored against the 10 human
+references they reach precision 59%, recall 29% and F1 39%, with 2 exact matches and no changes to text that was already correct.
+
+### Development and evaluation
+
+```bash
+python -m unittest discover -s tests     # offline test suite; no request leaves the machine
+python evaluate.py --candidate-dir rectified_articles --label final   # score against the 10 references
+```
+
+The prompt was tuned on 7 reference articles (001, 002, 005, 006, 008, 009, 010) and checked once on
+3 held-out articles (003, 004, 007).
+
 ## Getting Started
 
 ### Setup
@@ -105,9 +212,10 @@ Your code must save the final output to the rectified_articles/ directory.
 
    | Variable | Description | Example |
    | --- | --- | --- |
-   | `LLM_API_KEY` | API key for the LLM provider | `gsk_...` |
-   | `LLM_API_BASE` | Base URL of the provider's OpenAI-compatible endpoint | `https://api.groq.com/openai/v1` |
-   | `LLM_MODEL_NAME` | LiteLLM model identifier used for rectification | `groq/openai/gpt-oss-120b` |
+   | `LLM_API_KEY` | API key for the LLM provider | `your-api-key` |
+   | `LLM_API_BASE` | Base URL of the provider's OpenAI-compatible endpoint | `https://recllm.brahmastra.tech/` |
+   | `LLM_MODEL_NAME` | LiteLLM model identifier used for rectification | `openai/gpt-oss-120b` |
+   | `MAX_SPEND_USD` | Optional spending cap (default 0.50, never above the 3.00 hard limit) | `0.50` |
 
    > **Note:** If you received the problem statement **along with the API key via direct email**, use the dedicated proxy endpoint and the API key provided in that email instead:
    >
@@ -142,18 +250,13 @@ python rectifier.py rectify-all
 
 ### Integration Point
 
-Plug your rectification logic into `rectifier.py` at line 51:
+The rectifier is plugged into `_rectify()` in `rectifier.py`, which calls
+`rectification_system.run(ai_generated_content, source_content, article_id)`:
 
 ```python
-def rectify_article(article_id: str):
-    ai_generated_content = get_ai_generated_article(article_id)
-    
     # PLUG YOUR CUSTOM RECTIFIER HERE
-    rectified_content = run(ai_generated_content)
+    result = run(ai_generated_content, source_content, article_id)
     ###################################
-    
-    save_rectified_article(article_id, rectified_content)
-    return rectified_content
 ```
 
 ### Implementation Freedom
@@ -187,7 +290,7 @@ Ensure that your code handles exceptions gracefully and that your logic is robus
 
 - **Design your evaluation metric first**—use it to iteratively improve your system
 - **Start small** (5-10 articles), validate, then scale up
-- **Use the 10 reference examples** in `rectified_articles/` to validate your approach
+- **Use the 10 reference examples** (kept in `reference_rectified/`) to validate your approach
 - **Optimize token usage**—you have a limited budget (~10M tokens for development)
 - **Document your reasoning** for key design decisions
 

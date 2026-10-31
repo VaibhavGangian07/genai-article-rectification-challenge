@@ -1,2 +1,5 @@
 # Tokenizer data is hash-checked by tiktoken; line-ending conversion would corrupt it
 tokenizers/* binary
+
+# Rectified articles keep the AI articles' text byte for byte, including markdown line-break spaces
+rectified_articles/*.txt -whitespace

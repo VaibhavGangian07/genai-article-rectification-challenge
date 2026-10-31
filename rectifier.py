@@ -178,7 +178,8 @@ def rectify_all():
     return process_articles(articles)
 
 
-if __name__ == "__main__":
+def main(argv=None) -> int:
+    """Run the CLI; the exit code is 1 if any article fell back or failed, else 0."""
     configure_console()
     
     parser = argparse.ArgumentParser(
@@ -196,11 +197,16 @@ if __name__ == "__main__":
         help='Number of articles to test (only applicable for "test" command, default: 16)'
     )
     
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     
     if args.command == 'test':
         print(f"Testing rectification system on first {args.count} articles...")
-        test_rectifier(count=args.count)
+        outcomes = test_rectifier(count=args.count)
     elif args.command == 'rectify-all':
         print("Processing all 104 articles...")
-        rectify_all()
+        outcomes = rectify_all()
+    return 1 if outcomes['fallback'] or outcomes['failed'] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
