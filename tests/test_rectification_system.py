@@ -6,11 +6,15 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 
+import tempfile
 import llm_client
+import rectifier
 import rectification_system
 from llm_client import LLMError, LLMResponse
 from article_utils import strip_annotations, find_annotation_leak
+from test_validation import COMMENTARY_004
 
 MAPPING = {a["article_id"]: a for a in json.loads((ROOT / "article_mapping.json").read_text())}
 
@@ -140,6 +144,29 @@ class TestFallback(RunTestCase):
 
 
 class TestAnnotationsNeverLeak(RunTestCase):
+
+    def test_annotation_notes_never_reach_the_saved_article(self):
+        edits = [{"op": "replace", "find": f, "replace": r, "evidence": r, "evidence_from": "annotation"}
+                 for f, r in COMMENTARY_004]
+        edits.append({"op": "replace", "find": "only a handful of theaters refusing to screen it",
+                      "replace": "most theaters refusing to screen it",
+                      "evidence": "most theaters refusing to screen it", "evidence_from": "annotation"})
+        result = self.run_article("article_004", reply(edits))
+        self.assertEqual(result.status, "rectified")
+        self.assertEqual([a["replace"] for a in result.applied], ["most theaters refusing to screen it"])
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "article_004.txt"
+            with mock.patch.object(rectifier, "get_article_mapping", return_value={"rectified_file": str(target)}):
+                rectifier.save_rectified_article("article_004", result.text)
+            target.read_bytes().decode("utf-8")   # strict UTF-8; raises on any invalid byte
+            saved = target.read_text(encoding="utf-8")   # text mode, as every reader in the repo opens it
+        self.assertEqual(saved, result.text)
+        self.assertNotIn("\ufffd", saved)
+        self.assertIsNone(find_annotation_leak(saved))
+        for _, note in COMMENTARY_004:
+            self.assertNotIn(note, saved)
+        for phrase in ("serious/controversial", "in some references", "director's name is", "in that regard"):
+            self.assertNotIn(phrase, saved)
 
     def test_outputs_for_every_status_are_free_of_annotation_text(self):
         attempts = [("article_008", [reply(EDITS_008)]), ("article_015", [reply([])]),

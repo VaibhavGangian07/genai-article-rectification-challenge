@@ -31,6 +31,12 @@ ANCHOR_WINDOW = 8      # context words taken on each side of an edit
 PROXIMITY = 10         # max token distance between a new value and an anchor
 MAX_GLUE_WORDS = 2     # new words allowed without support (e.g. "unlike", "come")
 MAX_DELETE_WORDS = 25  # longer deletions need a linked annotation
+MAX_ANNOTATION_NEW_WORDS = MAX_GLUE_WORDS   # annotation-backed edits: new words beyond the corrected values
+# annotation corrections are often notes to an editor; these never belong in a published replacement
+EDITORIAL_MARKS = ('(', ')', '[', ']', ';', '/', '—', '–')
+EDITORIAL_WORDS = {'correct', 'correctly', 'corrected', 'correction', 'incorrect', 'incorrectly', 'actually',
+                   'should', 'source', 'sources', 'annotation', 'error', 'erroneous', 'erroneously', 'mistakenly',
+                   'wrongly', 'instead', 'note', 'described', 'referred', 'references', 'purportedly', 'clarify'}
 
 
 def tokens(text: str):
@@ -176,6 +182,27 @@ def _flat(fact_sets):
     return [(kind, value) for kind in FACT_TYPES for value in sorted(fact_sets[kind])]
 
 
+def _words(text: str):
+    return [w.strip('.,:;!?"\'()[]“”‘’') for w in normalize(text).split()]
+
+
+def _annotation_commentary(find: str, replace: str, introduced):
+    """
+    Why an annotation-backed replacement is not fit to publish, or None.
+    Only the corrected values may be new; anything more is likely the annotation's explanation.
+    """
+    if any(replace.count(m) > find.count(m) for m in EDITORIAL_MARKS):
+        return 'annotation_commentary'
+    fact_tokens = {t for k in ('NUM', 'DATE', 'NEG') for t in introduced[k]} | {t for e in introduced['ENT'] for t in e}
+    old = set(_words(find))
+    new = [w for w in _words(replace) if w and w not in old and not set(tokens(w)) <= fact_tokens]
+    if any(t in EDITORIAL_WORDS for w in new for t in tokens(w)):
+        return 'annotation_commentary'
+    if len(new) > MAX_ANNOTATION_NEW_WORDS:
+        return 'annotation_not_minimal'
+    return None
+
+
 def check_edit(edit, start: int, end: int, body: str, source: str, annotations):
     """
     Decide whether a located edit is supported.
@@ -204,6 +231,9 @@ def check_edit(edit, start: int, end: int, body: str, source: str, annotations):
         entry = linked_annotation(edit.find, annotations)
         if entry and _quote_found(edit.evidence, entry.get('correction', '')):
             support = 'annotation_supported'
+            commentary = _annotation_commentary(edit.find, edit.replace, introduced)
+            if commentary:
+                return None, commentary
         elif any(_quote_found(edit.evidence, a.get('correction', '')) for a in annotations):
             return None, 'annotation_unlinked'
         else:

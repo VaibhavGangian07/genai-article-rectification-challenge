@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from article_utils import split_annotations
+from article_utils import split_annotations, parse_annotations
 from edits import Edit, locate
 from validation import check_edit, check_output, facts
 
@@ -122,6 +122,89 @@ class TestAnnotationEvidence(unittest.TestCase):
         result = check("replace", "won 3 matches", "won 5 matches", evidence="won 5 matches in April",
                        source=source, annotations=[self.ANNOTATION])
         self.assertEqual(result, (None, "source_conflict"))
+
+
+MAPPING = {a["article_id"]: a for a in json.loads((ROOT / "article_mapping.json").read_text())}
+
+
+def check_article(article_id, find, new, evidence):
+    """check() against a real article, its source and its parsed annotations."""
+    read = lambda key: (ROOT / MAPPING[article_id][key]).read_text(encoding="utf-8")
+    body, raw = split_annotations(read("ai_generated_file"))
+    return check("replace", find, new, evidence=evidence, body=body, source=read("source_file"),
+                 annotations=parse_annotations(raw))
+
+
+# annotation-backed replacements the model proposed for article_004; each copies an editor's note into the article
+COMMENTARY_004 = [
+    ("with some critics even calling it a light-hearted comedy",
+     "the film has been described as a serious/controversial work dealing with sensitive historical events"),
+    ("portrayal of Gopal Mukherjee, a former British police officer, rather than Gopal Patha, a revolutionary leader",
+     "portrayal of Gopal Patha (also referred to as Gopal Mukherjee in some references), a key figure purportedly "
+     "protecting Hindus during the 1946 riots — not a British police officer"),
+    ("His grandson praised the depiction and filed a letter of appreciation to producer Karan Johar, instead of "
+     "lodging a complaint against director Vivek Ranjan.",
+     "His grandson expressed disappointment over the portrayal and filed a complaint against director Vivek "
+     "Agnihotri (not a praise letter to Karan Johar, and the director's name is Vivek Agnihotri)."),
+    ("The family denied any legal action, and no complaints were recorded.",
+     "A complaint was filed by the grandson; the family did not deny legal action in that regard."),
+]
+
+
+class TestAnnotationCommentary(unittest.TestCase):
+
+    SILENT_SOURCE = "Officials confirmed the flight left on time."
+
+    def test_editorial_notes_from_article_004_are_rejected(self):
+        for find, new in COMMENTARY_004:
+            with self.subTest(find=find[:40]):
+                support, reason = check_article("article_004", find, new, evidence=new)
+                self.assertIsNone(support)
+                self.assertIn(reason, ("annotation_commentary", "annotation_not_minimal"))
+
+    def test_minimal_annotation_corrections_are_still_accepted(self):
+        self.assertEqual(check_article("article_004", "only a handful of theaters refusing to screen it",
+                                       "most theaters refusing to screen it", evidence="most theaters refusing to screen it"),
+                         ("annotation_supported", None))
+        self.assertEqual(check_article("article_007", "Afghanistan, who were set an above-par total",
+                                       "Afghanistan, who were set a below-par total",
+                                       evidence="Afghanistan, who were set a below-par total"),
+                         ("annotation_supported", None))
+        self.assertEqual(check_article("article_007", "winning the 2024 ICC T20 World Cup",
+                                       "reaching the 2024 ICC T20 World Cup semi-final",
+                                       evidence="reaching the 2024 ICC T20 World Cup semi-final"),
+                         ("annotation_supported", None))
+
+    def test_wrong_name_replaced_by_the_annotated_name(self):
+        body = "The detainees flew home on a flight with Asiana Airlines on Friday.\nNext."
+        note = {"error": "with Asiana Airlines", "correction": "flew home on a flight with Korean Air"}
+        self.assertEqual(check("replace", "with Asiana Airlines", "with Korean Air",
+                               evidence="flew home on a flight with Korean Air",
+                               body=body, source=self.SILENT_SOURCE, annotations=[note]), ("annotation_supported", None))
+
+    def test_long_explanation_without_editorial_markers_is_rejected(self):
+        body = "The team won 3 matches at Lords stadium this spring.\nNext."
+        correction = "won 5 matches, which was later confirmed by the league after a lengthy review"
+        note = {"error": "won 3 matches", "correction": correction}
+        self.assertEqual(check("replace", "won 3 matches", correction, evidence=correction, body=body,
+                               source=self.SILENT_SOURCE, annotations=[note]), (None, "annotation_not_minimal"))
+
+    def test_editorial_wording_is_rejected_even_when_short(self):
+        body = "The team won 3 matches at Lords stadium this spring.\nNext."
+        for correction in ("actually won 5 matches", "won 5 matches (correct)", "won 5 matches; source"):
+            with self.subTest(correction=correction):
+                note = {"error": "won 3 matches", "correction": correction}
+                self.assertEqual(check("replace", "won 3 matches", correction, evidence=correction, body=body,
+                                       source=self.SILENT_SOURCE, annotations=[note]), (None, "annotation_commentary"))
+
+    def test_source_supported_edits_are_not_affected(self):
+        # parentheses and several new words are fine when the source sentence itself says so
+        evidence = ("Global brokerage Bank of America Securities (BofA), in its latest note, raised Maruti Suzuki's "
+                    "share price target to ₹17,000 per share from ₹14,000, while maintaining a "
+                    "‘buy’ rating on the stock.")
+        self.assertEqual(check_article("article_003", "Morgan Stanley", "Bank of America Securities (BofA)", evidence),
+                         ("source_supported", None))
+        self.assertEqual(check("replace", "won 3 matches", "won 5 matches"), ("source_supported", None))
 
 
 class TestDeletion(unittest.TestCase):
